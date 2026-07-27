@@ -1,3 +1,7 @@
+# Binary
+main
+bin/main
+
 # Prerequisites
 *.d
 

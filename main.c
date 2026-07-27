@@ -417,14 +417,14 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
   }    
   SDL_RenderPresent(renderer);
 
+  
   if (head_vector->len > 15) {
-    unsigned long len = head_vector->len;
+    unsigned long len = head_vector->len-1;
     for (unsigned int i = 0; i < len; ++i) {
       vector_pop(head_vector);
     }
     
   }
-
 
   return SDL_APP_CONTINUE; /* carry on with the program! */
 }
