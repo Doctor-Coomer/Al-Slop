@@ -23,8 +23,8 @@ static Uint32 al_dance_wav_data_len = 0;
 
 static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
-static SDL_AudioStream *stream = NULL;
-static int current_sine_sample = 0;
+static SDL_AudioSpec spec;
+
 
 static SDL_Texture *al_face = NULL; // aka: idle face
 static SDL_Texture *al_talk[4]  = {NULL, NULL, NULL, NULL};
@@ -60,6 +60,8 @@ struct AlHead {
   Uint64 swish_state_iterations;
   Uint64 dance_state_iterations;
   bool do_sound;
+  bool do_clone;
+  SDL_AudioStream* stream;
   void (*draw)(struct AlHead *);
   void (*sound)(struct AlHead *);
   void (*think)(struct AlHead *);
@@ -81,24 +83,24 @@ void AlHead_sound(struct AlHead *head) {
   switch (head->state) {
   case TALK:
     {
-      if (SDL_GetAudioStreamQueued(stream) < (int)al_talk_wav_data_len && head->current_face == al_talk[0]) {
-	SDL_PutAudioStreamData(stream, al_talk_wav_data, al_talk_wav_data_len);
+      if (SDL_GetAudioStreamQueued(head->stream) < (int)al_talk_wav_data_len && head->current_face == al_talk[0]) {
+	SDL_PutAudioStreamData(head->stream, al_talk_wav_data, al_talk_wav_data_len);
       }
       break;
     }
 
   case SWISH:
     {
-      if (SDL_GetAudioStreamQueued(stream) < (int)al_swish_wav_data_len && head->current_face == al_swish[0]) {
-	SDL_PutAudioStreamData(stream, al_swish_wav_data, al_swish_wav_data_len);
+      if (SDL_GetAudioStreamQueued(head->stream) < (int)al_swish_wav_data_len && head->current_face == al_swish[0]) {
+	SDL_PutAudioStreamData(head->stream, al_swish_wav_data, al_swish_wav_data_len);
       }
       break;
     }
 
   case DANCE:
     {
-      if (SDL_GetAudioStreamQueued(stream) < (int)al_dance_wav_data_len) {
-	SDL_PutAudioStreamData(stream, al_dance_wav_data, al_dance_wav_data_len);
+      if (SDL_GetAudioStreamQueued(head->stream) < (int)al_dance_wav_data_len) {
+	SDL_PutAudioStreamData(head->stream, al_dance_wav_data, al_dance_wav_data_len);
       }
       break;
     }
@@ -185,7 +187,8 @@ void AlHead_think(struct AlHead *head) {
 	    head->talk_state_iterations = SDL_rand_range(10, 24)*3;
 	    head->wait_seconds = SDL_rand_range(2, 7);
 	    head->do_sound = false;
-	    SDL_ClearAudioStream(stream); // Cut dance sound off early
+	    SDL_ClearAudioStream(head->stream); // Cut dance sound off early
+	    head->do_clone = true;
 	  }
 	  
 	  break;
@@ -231,11 +234,54 @@ struct AlHead *AlHead_new(SDL_FRect rect, float scale) {
   head->dance_state_iterations = 24*3;
 
   head->do_sound = false;
+  head->do_clone = false;
+
+  head->stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec,
+                                     NULL, NULL);
+  if (!head->stream) {
+    SDL_Log("Couldn't create audio stream: %s", SDL_GetError());
+  }
+
+  // SDL_OpenAudioDeviceStream starts the device paused. You have to tell it to
+  // start!
+  SDL_ResumeAudioStreamDevice(head->stream);
+
+
+  SDL_SetAudioStreamFrequencyRatio(head->stream, SDL_rand_range(90, 140)/100.f);
+
   
   return head;
 }
 
 static struct AlHead *alhead;
+
+struct HeadVector {
+  struct AlHead **arr;
+  unsigned long len;
+};
+
+struct HeadVector *vector_init(struct AlHead *head) {
+  struct HeadVector *head_vector = malloc(sizeof(struct HeadVector));
+  head_vector->arr = malloc(sizeof(struct AlHead *));
+
+  head_vector->arr[0] = head;
+  head_vector->len = 1;
+
+  return head_vector;
+}
+
+void vector_push(struct HeadVector *head_vector, struct AlHead *head) {
+  head_vector->arr = realloc(head_vector->arr, sizeof(struct HeadVector)*(head_vector->len+1));
+  head_vector->arr[head_vector->len] = head;
+  head_vector->len++;
+};
+
+void vector_pop(struct HeadVector *head_vector) {
+  head_vector->arr = realloc(head_vector->arr, sizeof(struct HeadVector)*(head_vector->len-1));
+  head_vector->len--;
+}
+
+static struct HeadVector* head_vector;
 
 #define WINDOW_WIDTH 640
 #define WINDOW_HEIGHT 480
@@ -244,8 +290,6 @@ static struct AlHead *alhead;
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
 
   SDL_srand(time(NULL));
-
-  SDL_AudioSpec spec;
 
   SDL_SetAppMetadata("Al Slop", "1.0", "Al Slop");
 
@@ -282,16 +326,6 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
   }
 
   
-  stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec,
-                                     NULL, NULL);
-  if (!stream) {
-    SDL_Log("Couldn't create audio stream: %s", SDL_GetError());
-    return SDL_APP_FAILURE;
-  }
-
-  // SDL_OpenAudioDeviceStream starts the device paused. You have to tell it to
-  // start!
-  SDL_ResumeAudioStreamDevice(stream);
 
   SDL_Surface *surface = NULL;
 
@@ -338,6 +372,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
 
   SDL_FRect rect = {WINDOW_WIDTH/2.f - (al_face->w*0.4)/2.f, WINDOW_HEIGHT/2.f - (al_face->h*0.4)/2.f, al_face->w, al_face->h};
   alhead = AlHead_new(rect, 0.4f);
+
+  head_vector = vector_init(alhead);
   
   return SDL_APP_CONTINUE; /* carry on with the program! */
 }
@@ -350,93 +386,45 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
   return SDL_APP_CONTINUE; /* carry on with the program! */
 }
 
-struct HeadVector {
-  struct AlHead **arr;
-  unsigned long len;
-};
-
-struct HeadVector *vector_init(struct AlHead *head) {
-  struct HeadVector *head_vector = malloc(sizeof(struct HeadVector));
-  head_vector->arr = malloc(sizeof(struct AlHead *));
-
-  head_vector->arr[0] = head;
-  head_vector->len = 1;
-
-  return head_vector;
-}
-
-void vector_push(struct HeadVector *head_vector, struct AlHead *head) {
-  head_vector->arr = realloc(head_vector->arr, head_vector->len+1);
-  head_vector->arr[head_vector->len] = head;
-  head_vector->len++;
-};
-
 /* This function runs once per frame, and is the heart of the program. */
 SDL_AppResult SDL_AppIterate(void *appstate) {
-  /* see if we need to feed the audio stream more data yet.
-     We're being lazy here, but if there's less than half a second queued,
-     generate more. A sine wave is unchanging audio--easy to stream--but for
-     video games, you'll want to generate significantly _less_ audio ahead of
-     time! */
-  /*
-  const int minimum_audio =
-      (8000 * sizeof(float)) /
-      2;
-      
-  if (SDL_GetAudioStreamQueued(stream) < minimum_audio) {
-    static float samples[512];
-    
-    int i;
 
-    for (i = 0; i < SDL_arraysize(samples); i++) {
-      const int freq = 440;
-      const float phase = current_sine_sample * freq / 8000.0f;
-      samples[i] = SDL_sinf(phase * 2 * SDL_PI_F);
-      current_sine_sample++;
+  // Clone
+  unsigned long len = head_vector->len;
+  for (unsigned int i = 0; i < len; ++i) {
+    struct AlHead* head = head_vector->arr[i];
+    if (head->do_clone == true) {
+      SDL_FRect rect = {SDL_rand_range(0, WINDOW_WIDTH-50), SDL_rand_range(0, WINDOW_HEIGHT-50), al_face->w, al_face->h};
+      vector_push(head_vector, head->new(rect, 0.1));
+      head->do_clone = false;
     }
-
-    current_sine_sample %= 8000;
-
-    SDL_PutAudioStreamData(stream, samples, sizeof(samples));
   }
-  */
-
   
-  alhead->think(alhead);
+  // Think
+  for (unsigned int i = 0; i < head_vector->len; ++i) {
+    struct AlHead* head = head_vector->arr[i];
+    head->think(head);
+  }
+  bool SDL_SetAudioStreamFrequencyRatio(SDL_AudioStream *stream, float ratio);
 
-  
-  alhead->sound(alhead);
-
-  
-  /* as you can see from this, rendering draws over whatever was drawn before
-   * it. */
-  SDL_SetRenderDrawColor(renderer, 255, 255, 255,
-                         SDL_ALPHA_OPAQUE);
+  // Sound + Render
+  SDL_SetRenderDrawColor(renderer, 255, 255, 255, SDL_ALPHA_OPAQUE);
   SDL_RenderClear(renderer);
-
-  /*
-  dst_rect.x = (100.0f * scale);
-  dst_rect.y = 0.0f;
-  dst_rect.w = (float)texture_width;
-  dst_rect.h = (float)texture_height;
-  SDL_RenderTexture(renderer, texture, NULL, &dst_rect);
-
-  dst_rect.x = ((float)(WINDOW_WIDTH - texture_width)) / 2.0f;
-  dst_rect.y = ((float)(WINDOW_HEIGHT - texture_height)) / 2.0f;
-  dst_rect.w = (float)texture_width;
-  dst_rect.h = (float)texture_height;
-  SDL_RenderTexture(renderer, texture, NULL, &dst_rect);
-
-  dst_rect.x = ((float)(WINDOW_WIDTH - texture_width)) - (100.0f * scale);
-  dst_rect.y = (float)(WINDOW_HEIGHT - texture_height);
-  dst_rect.w = (float)texture_width;
-  dst_rect.h = (float)texture_height;
-  SDL_RenderTexture(renderer, texture, NULL, &dst_rect);
-  */
-  
-  alhead->draw(alhead);
-    
+  for (unsigned int i = 0; i < head_vector->len; ++i) {
+    struct AlHead* head = head_vector->arr[i];
+    head->sound(head);
+    head->draw(head);
+  }    
   SDL_RenderPresent(renderer);
+
+  if (head_vector->len > 15) {
+    unsigned long len = head_vector->len;
+    for (unsigned int i = 0; i < len; ++i) {
+      vector_pop(head_vector);
+    }
+    
+  }
+
 
   return SDL_APP_CONTINUE; /* carry on with the program! */
 }
