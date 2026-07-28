@@ -4,7 +4,7 @@
 #include <SDL3/SDL_main.h>
 
 #include <time.h>
-#include <malloc.h>
+#include <stdlib.h>
 
 #include "al_face.hpp"
 
@@ -154,7 +154,7 @@ void AlHead_think(struct AlHead *head) {
 	  } else {
 	    head->current_face = al_face;
 	    head->state = SWISH;
-	    head->swish_state_iterations = SDL_rand_range(7, 21)*3;
+	    head->swish_state_iterations = SDL_rand_range(7*3, 21*3);
 	    head->wait_seconds = SDL_rand_range(1, 4);
 	    head->do_sound = false;
 	  }
@@ -169,7 +169,7 @@ void AlHead_think(struct AlHead *head) {
 	  } else {
 	    head->current_face = al_face;
 	    head->state = DANCE;
-	    head->dance_state_iterations = SDL_rand_range(7, 21)*3;
+	    head->dance_state_iterations = SDL_rand_range(7*3, 21*3);
 	    head->wait_seconds = SDL_rand_range(2, 7);
 	    head->do_sound = false;
 	  }
@@ -184,7 +184,7 @@ void AlHead_think(struct AlHead *head) {
 	  } else {
 	    head->current_face = al_face;
 	    head->state = TALK;
-	    head->talk_state_iterations = SDL_rand_range(10, 24)*3;
+	    head->talk_state_iterations = SDL_rand_range(10*3, 24*3);
 	    head->wait_seconds = SDL_rand_range(2, 7);
 	    head->do_sound = false;
 	    SDL_ClearAudioStream(head->stream); // Cut dance sound off early
@@ -201,11 +201,12 @@ void AlHead_think(struct AlHead *head) {
     } else {
       head->delta_count = 0;
     }
+    
     head->previous = now;
-
   }
 }
 void AlHead_free(struct AlHead *head) {
+  SDL_ClearAudioStream(head->stream);
   free(head);
 }
 struct AlHead *AlHead_new(SDL_FRect rect, float scale) {
@@ -229,15 +230,14 @@ struct AlHead *AlHead_new(SDL_FRect rect, float scale) {
   head->previous_wait_seconds = SDL_MS_TO_SECONDS(SDL_GetTicks());
   head->wait_seconds = 0;
 
-  head->talk_state_iterations = SDL_rand_range(10, 24)*3;
-  head->swish_state_iterations = 24*3;
-  head->dance_state_iterations = 24*3;
+  head->talk_state_iterations = SDL_rand_range(10*3, 24*3);
+  head->swish_state_iterations = 0; // Value set in AlHead_think
+  head->dance_state_iterations = 0; // Value set in AlHead_think
 
   head->do_sound = false;
   head->do_clone = false;
 
-  head->stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec,
-                                     NULL, NULL);
+  head->stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
   if (!head->stream) {
     SDL_Log("Couldn't create audio stream: %s", SDL_GetError());
   }
@@ -277,6 +277,9 @@ void vector_push(struct HeadVector *head_vector, struct AlHead *head) {
 };
 
 void vector_pop(struct HeadVector *head_vector) {
+  struct AlHead *head = head_vector->arr[head_vector->len-1];
+  head->free(head);
+  
   head_vector->arr = realloc(head_vector->arr, sizeof(struct HeadVector)*(head_vector->len-1));
   head_vector->len--;
 }
