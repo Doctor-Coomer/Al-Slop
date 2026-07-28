@@ -6,17 +6,17 @@
 #include <time.h>
 #include <stdlib.h>
 
-#include "al_face.hpp"
+#include "al_face.h"
 
-#include "al_talk.hpp"
+#include "al_talk.h"
 static Uint8 *al_talk_wav_data = NULL;
 static Uint32 al_talk_wav_data_len = 0;
 
-#include "al_swish.hpp"
+#include "al_swish.h"
 static Uint8 *al_swish_wav_data = NULL;
 static Uint32 al_swish_wav_data_len = 0;
 
-#include "al_dance.hpp"
+#include "al_dance.h"
 static Uint8 *al_dance_wav_data = NULL;
 static Uint32 al_dance_wav_data_len = 0;
 
